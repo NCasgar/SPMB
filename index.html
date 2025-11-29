@@ -22,7 +22,7 @@
     <div class="max-w-7xl mx-auto mb-6 flex flex-col md:flex-row justify-between items-center">
         <div>
             <h1 class="text-3xl font-bold text-indigo-800">SPMB Monitor</h1>
-            <p class="text-gray-500 text-sm">Live data from ESP32 via GitHub Raw</p>
+            <p class="text-gray-500 text-sm">Live data directly from GitHub Raw (Bypassing Vercel Build)</p>
         </div>
         <div class="mt-4 md:mt-0 text-right">
             <div id="status" class="text-sm font-semibold text-gray-400 flex items-center gap-2">
@@ -109,17 +109,23 @@
     // Chart Instances
     let chart1, chart2;
 
-    // Run on load
-    document.addEventListener("DOMContentLoaded", fetchData);
+    // Run on load and every 5 seconds
+    document.addEventListener("DOMContentLoaded", () => {
+        fetchData();
+        setInterval(fetchData, 5000); // Auto-refresh every 5 seconds
+    });
 
     // --- MAIN FUNCTION: Fetch Data from GitHub Raw ---
     function fetchData() {
         const statusEl = document.getElementById("status");
-        statusEl.innerHTML = '<div class="loader"></div> Fetching...';
-
-        // 1. Construct URL with Timestamp to bypass Cache
+        
+        // 1. Construct URL
         const rawUrl = `https://raw.githubusercontent.com/${GITHUB_USERNAME}/${REPO_NAME}/${BRANCH_NAME}/${FILE_PATH}`;
+        
+        // 2. THE SECRET: Add a timestamp to the URL to bypass the cache
         const cacheBuster = rawUrl + '?t=' + new Date().getTime();
+
+        console.log("Fetching: " + cacheBuster);
 
         fetch(cacheBuster)
             .then(response => {
@@ -129,7 +135,7 @@
             .then(csvText => {
                 const data = parseCSV(csvText);
                 updateUI(data);
-                statusEl.innerHTML = '<span class="text-green-500">● Live</span>';
+                statusEl.innerHTML = '<span class="text-green-500">● Live (Direct from GitHub)</span>';
             })
             .catch(error => {
                 console.error(error);
