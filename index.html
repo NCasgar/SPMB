@@ -85,6 +85,20 @@
         }
         tbody tr:nth-child(odd) { background-color: #f9fafb; }
         tbody tr:hover { background-color: #f3f4f6; }
+
+        /* Loading Spinner */
+        .loader {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #4f46e5;
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            animation: spin 1s linear infinite;
+            display: inline-block;
+            vertical-align: middle;
+            margin-right: 8px;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
     </style>
 </head>
 
@@ -98,10 +112,17 @@
     
     <div class="input-group">
         <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">Upload Log File</label>
-            <p class="text-sm text-gray-500 mb-2">Select <code>data.csv</code> from your SD card.</p>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Data Source</label>
+            <div id="loadingIndicator" class="text-sm text-indigo-600 font-semibold hidden">
+                <div class="loader"></div> Loading data.csv from repository...
+            </div>
+            <p id="sourceStatus" class="text-sm text-gray-500 mb-2">
+                Attempting to load default <code>data.csv</code>...
+            </p>
         </div>
+        
         <div class="flex-shrink-0 w-full sm:w-auto">
+            <label class="block text-xs text-gray-400 mb-1">Or upload specific file:</label>
             <input 
                 type="file" 
                 id="csvFileInput" 
@@ -244,125 +265,144 @@
 let allSensorData = [];
 let chartInstances = {};
 
+// --- Helper: Parsing Logic (Reused by Fetch and Upload) ---
+function parseCSV(text) {
+    const lines = text.trim().split(/\r?\n/).filter(line => line.trim() !== '');
+    if (lines.length === 0) throw new Error("File is empty.");
+
+    // 1. Parse Header
+    const headerLine = lines[0].trim();
+    const headers = headerLine.split(",").map(h => h.trim().replace(/^"|"$/g, ''));
+    
+    // 2. Parse Data Lines
+    const dataLines = lines.slice(1);
+    if (dataLines.length === 0) throw new Error("No data rows found.");
+
+    // Reset Data
+    allSensorData = [];
+
+    // Parse CSV into Objects
+    dataLines.forEach(line => {
+        const cols = line.split(",").map(c => c.trim().replace(/^"|"$/g, ''));
+        if (cols.length === headers.length) {
+            const dateStr = cols[0]; 
+            const timeStr = cols[1];
+            const fullDateStr = `${dateStr} ${timeStr}`;
+            const timestamp = new Date(fullDateStr).getTime();
+
+            if (!isNaN(timestamp)) {
+                allSensorData.push({
+                    timestamp: timestamp,
+                    dateStr: dateStr,
+                    timeStr: timeStr,
+                    temp: parseFloat(cols[2]),
+                    hum: parseFloat(cols[3]),
+                    soil: parseFloat(cols[4]),
+                    rainRaw: cols[5],
+                    rainVal: (cols[5].toLowerCase() === 'yes') ? 1 : 0,
+                    ldr: parseFloat(cols[6]),
+                    water: parseFloat(cols[7])
+                });
+            }
+        }
+    });
+
+    // Sort by timestamp
+    allSensorData.sort((a, b) => a.timestamp - b.timestamp);
+
+    return { headers };
+}
+
+// --- Main Initialization ---
 document.addEventListener("DOMContentLoaded", () => {
     const csvFileInput = document.getElementById("csvFileInput");
     const statusMessage = document.getElementById("statusMessage");
-    
-    // UI Elements
+    const sourceStatus = document.getElementById("sourceStatus");
+    const loadingIndicator = document.getElementById("loadingIndicator");
+
     const latestContainer = document.getElementById("latestDataContainer");
     const chartsContainer = document.getElementById("chartsContainer");
     const tableWrapper = document.getElementById("tableWrapper");
-    
-    // Filter Buttons
-    const filterButtons = document.querySelectorAll('.filter-btn');
-    filterButtons.forEach(btn => {
-        btn.addEventListener('click', (e) => {
-            // UI Update
-            filterButtons.forEach(b => b.classList.remove('active'));
-            e.target.classList.add('active');
-            
-            // Logic Update
-            const days = parseInt(e.target.getAttribute('data-days'));
-            updateCharts(days);
-        });
-    });
 
+    // 1. Auto-Load on Startup
+    autoLoadData();
+
+    function autoLoadData() {
+        loadingIndicator.classList.remove('hidden');
+        sourceStatus.classList.add('hidden');
+
+        // Fetch data.csv from the current directory
+        fetch('data.csv')
+            .then(response => {
+                if (!response.ok) throw new Error("data.csv not found (404)");
+                return response.text();
+            })
+            .then(text => {
+                const { headers } = parseCSV(text);
+                updateUI(headers);
+                
+                loadingIndicator.classList.add('hidden');
+                sourceStatus.classList.remove('hidden');
+                sourceStatus.innerHTML = `Loaded default <span class="font-bold text-gray-700">data.csv</span> from repository.`;
+                sourceStatus.classList.add('text-green-600');
+            })
+            .catch(err => {
+                loadingIndicator.classList.add('hidden');
+                sourceStatus.classList.remove('hidden');
+                sourceStatus.innerHTML = `Default <code>data.csv</code> not found. Please upload manually.`;
+                sourceStatus.classList.add('text-amber-600');
+                console.warn("Auto-load failed:", err);
+            });
+    }
+
+    // 2. Manual Upload Listener
     csvFileInput.addEventListener("change", function(e) {
         const file = e.target.files[0];
         if (!file) return;
 
         // Reset UI
         statusMessage.classList.add('hidden');
-        latestContainer.classList.add('hidden');
-        chartsContainer.classList.add('hidden');
-        tableWrapper.classList.add('hidden');
-        
-        allSensorData = []; // Clear old data
+        sourceStatus.textContent = "Processing uploaded file...";
+        sourceStatus.className = "text-sm text-blue-600 mb-2";
 
         const reader = new FileReader();
-
         reader.onload = function(event) {
-            const text = event.target.result;
-            const lines = text.trim().split(/\r?\n/).filter(line => line.trim() !== '');
-
-            if (lines.length === 0) {
-                showError("File is empty.");
-                return;
-            }
-
-            // 1. Parse Header
-            const headerLine = lines[0].trim();
-            const headers = headerLine.split(",").map(h => h.trim().replace(/^"|"$/g, ''));
-            
-            // Build Table Header
-            const tableHeaderRow = document.getElementById("tableHeaderRow");
-            tableHeaderRow.innerHTML = "";
-            headers.forEach(header => {
-                const th = document.createElement("th");
-                th.textContent = header;
-                tableHeaderRow.appendChild(th);
-            });
-
-            // 2. Parse Data Lines
-            const dataLines = lines.slice(1);
-            if (dataLines.length === 0) {
-                showError("No data rows found.");
-                return;
-            }
-
-            // Parse CSV into Objects
-            dataLines.forEach(line => {
-                const cols = line.split(",").map(c => c.trim().replace(/^"|"$/g, ''));
-                if (cols.length === headers.length) {
-                    // Try to parse date
-                    // Support YYYY-MM-DD or MM/DD/YYYY
-                    const dateStr = cols[0]; 
-                    const timeStr = cols[1];
-                    const fullDateStr = `${dateStr} ${timeStr}`;
-                    const timestamp = new Date(fullDateStr).getTime();
-
-                    if (!isNaN(timestamp)) {
-                        allSensorData.push({
-                            timestamp: timestamp,
-                            dateStr: dateStr,
-                            timeStr: timeStr,
-                            temp: parseFloat(cols[2]),
-                            hum: parseFloat(cols[3]),
-                            soil: parseFloat(cols[4]),
-                            rainRaw: cols[5],
-                            rainVal: (cols[5].toLowerCase() === 'yes') ? 1 : 0,
-                            ldr: parseFloat(cols[6]),
-                            water: parseFloat(cols[7])
-                        });
-                    }
-                }
-            });
-
-            // Sort data by timestamp (oldest first) for charting
-            allSensorData.sort((a, b) => a.timestamp - b.timestamp);
-
-            if (allSensorData.length > 0) {
-                // 3. Update Latest Reading (Last Item)
-                const latest = allSensorData[allSensorData.length - 1];
-                updateLatestCard(latest);
-
-                // 4. Update Charts (Default 1 Week)
-                chartsContainer.classList.remove('hidden');
-                updateCharts(7); 
-
-                // 5. Populate Table (Reverse Order - Newest First)
-                populateTable(allSensorData, headers);
-                
-                // Show containers
-                latestContainer.classList.remove('hidden');
-                tableWrapper.classList.remove('hidden');
+            try {
+                const { headers } = parseCSV(event.target.result);
+                updateUI(headers);
+                sourceStatus.innerHTML = `Loaded uploaded file: <span class="font-bold text-gray-700">${file.name}</span>`;
+                sourceStatus.className = "text-sm text-green-600 mb-2";
+            } catch (err) {
+                showError(err.message);
+                sourceStatus.textContent = "Upload failed.";
+                sourceStatus.className = "text-sm text-red-500 mb-2";
             }
         };
-
         reader.onerror = () => showError("Error reading file.");
         reader.readAsText(file);
     });
 
+    // 3. UI Update Logic
+    function updateUI(headers) {
+        if (allSensorData.length > 0) {
+            // Update Latest Reading
+            const latest = allSensorData[allSensorData.length - 1];
+            updateLatestCard(latest);
+
+            // Update Charts
+            chartsContainer.classList.remove('hidden');
+            updateCharts(7); // Default 1 week
+
+            // Update Table
+            populateTable(allSensorData, headers);
+            
+            // Show Sections
+            latestContainer.classList.remove('hidden');
+            tableWrapper.classList.remove('hidden');
+        }
+    }
+
+    // --- Sub-Functions ---
     function showError(msg) {
         statusMessage.textContent = msg;
         statusMessage.classList.remove('hidden');
@@ -381,26 +421,29 @@ document.addEventListener("DOMContentLoaded", () => {
 
     function populateTable(data, headers) {
         const tableBody = document.getElementById("tableBody");
+        const tableHeaderRow = document.getElementById("tableHeaderRow");
+        
+        // Build Headers
+        tableHeaderRow.innerHTML = "";
+        headers.forEach(header => {
+            const th = document.createElement("th");
+            th.textContent = header;
+            tableHeaderRow.appendChild(th);
+        });
+
+        // Build Rows (Reversed)
         tableBody.innerHTML = "";
-        
-        // Use a reversed copy for the table
         const reversed = [...data].reverse();
-        
-        // Limit to first 1000 rows for DOM performance if huge
         const displayData = reversed.slice(0, 1000); 
         
         document.getElementById('rowCountBadge').textContent = `${data.length} entries`;
 
         displayData.forEach(row => {
             const tr = document.createElement("tr");
-            
-            // Map object back to array order based on headers knowledge
-            // Or simpler: just use the properties we know
             const values = [
                 row.dateStr, row.timeStr, row.temp, row.hum, row.soil, 
                 row.rainRaw, row.ldr, row.water
             ];
-
             values.forEach(val => {
                 const td = document.createElement("td");
                 td.textContent = val;
@@ -409,32 +452,39 @@ document.addEventListener("DOMContentLoaded", () => {
             tableBody.appendChild(tr);
         });
     }
+
+    // Filter Button Logic
+    const filterButtons = document.querySelectorAll('.filter-btn');
+    filterButtons.forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            filterButtons.forEach(b => b.classList.remove('active'));
+            e.target.classList.add('active');
+            const days = parseInt(e.target.getAttribute('data-days'));
+            updateCharts(days);
+        });
+    });
 });
 
 // --- Charting Logic ---
-
 function updateCharts(daysRange) {
     if (allSensorData.length === 0) return;
 
-    // 1. Filter Data by Range
-    // Find the latest date in dataset
+    // Filter Data by Range
     const lastTimestamp = allSensorData[allSensorData.length - 1].timestamp;
     const msInDay = 24 * 60 * 60 * 1000;
     const cutoffTime = lastTimestamp - (daysRange * msInDay);
 
     let filteredData = allSensorData.filter(d => d.timestamp >= cutoffTime);
 
-    // 2. Downsampling (Optimization)
-    // If we have > 1000 points, take every Nth point to keep chart fast
+    // Downsampling
     const maxPoints = 800;
     if (filteredData.length > maxPoints) {
         const step = Math.ceil(filteredData.length / maxPoints);
         filteredData = filteredData.filter((_, index) => index % step === 0);
     }
 
-    // 3. Prepare Arrays
+    // Prepare Arrays
     const labels = filteredData.map(d => {
-        // Shorter labels for charts: "MM-DD HH:mm"
         const dateObj = new Date(d.timestamp);
         return `${dateObj.getMonth()+1}/${dateObj.getDate()} ${d.timeStr.substring(0,5)}`;
     });
@@ -446,34 +496,22 @@ function updateCharts(daysRange) {
     const waterData = filteredData.map(d => d.water);
     const rainData = filteredData.map(d => d.rainVal);
 
-    // 4. Draw Charts (Now 6 Separate Calls)
-    
-    // Temperature (Red)
+    // Draw Charts
     drawChart('chartTemp', 'line', labels, [
         { label: 'Temperature (°C)', data: tempData, borderColor: '#ef4444', backgroundColor: 'rgba(239, 68, 68, 0.1)', fill: true, tension: 0.3 }
     ]);
-
-    // Humidity (Blue)
     drawChart('chartHum', 'line', labels, [
         { label: 'Humidity (%)', data: humData, borderColor: '#3b82f6', backgroundColor: 'rgba(59, 130, 246, 0.1)', fill: true, tension: 0.3 }
     ]);
-
-    // Soil Moisture (Amber)
     drawChart('chartSoil', 'line', labels, [
         { label: 'Soil Moisture (%)', data: soilData, borderColor: '#d97706', backgroundColor: 'rgba(217, 119, 6, 0.1)', fill: true, tension: 0.3 }
     ]);
-
-    // LDR (Purple)
     drawChart('chartLDR', 'line', labels, [
         { label: 'Light Level (%)', data: ldrData, borderColor: '#9333ea', backgroundColor: 'rgba(147, 51, 234, 0.1)', fill: true, tension: 0.3 }
     ]);
-
-    // Water Level (Cyan)
     drawChart('chartWater', 'line', labels, [
         { label: 'Water Level (cm)', data: waterData, borderColor: '#06b6d4', backgroundColor: 'rgba(6, 182, 212, 0.2)', fill: true, tension: 0.2 }
     ], { min: 0, max: 12 });
-
-    // Rain (Indigo)
     drawChart('chartRain', 'line', labels, [
         { label: 'Rain (1=Yes, 0=No)', data: rainData, borderColor: '#6366f1', backgroundColor: 'rgba(99, 102, 241, 0.2)', fill: true, stepper: true, tension: 0 }
     ], { min: 0, max: 1.2, stepSize: 1 });
@@ -481,38 +519,17 @@ function updateCharts(daysRange) {
 
 function drawChart(canvasId, type, labels, datasets, yAxisConfig = {}) {
     const ctx = document.getElementById(canvasId).getContext('2d');
-
-    // Destroy existing chart if it exists
-    if (chartInstances[canvasId]) {
-        chartInstances[canvasId].destroy();
-    }
+    if (chartInstances[canvasId]) chartInstances[canvasId].destroy();
 
     chartInstances[canvasId] = new Chart(ctx, {
         type: type,
-        data: {
-            labels: labels,
-            datasets: datasets
-        },
+        data: { labels: labels, datasets: datasets },
         options: {
             responsive: true,
-            interaction: {
-                mode: 'index',
-                intersect: false,
-            },
-            plugins: {
-                legend: { position: 'top' },
-                tooltip: { enabled: true }
-            },
-            scales: {
-                x: { display: true, ticks: { maxTicksLimit: 10 } },
-                y: { 
-                    display: true,
-                    ...yAxisConfig // Merge custom Y-axis settings
-                }
-            },
-            elements: {
-                point: { radius: 0, hoverRadius: 6 } // Hide points for clean look, show on hover
-            }
+            interaction: { mode: 'index', intersect: false },
+            plugins: { legend: { position: 'top' }, tooltip: { enabled: true } },
+            scales: { x: { display: true, ticks: { maxTicksLimit: 10 } }, y: { display: true, ...yAxisConfig } },
+            elements: { point: { radius: 0, hoverRadius: 6 } }
         }
     });
 }
