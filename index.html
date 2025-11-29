@@ -3,548 +3,240 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ESP32-CAM Local CSV Viewer</title>
+    <title>SPMB Real-Time Monitor</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     
     <style>
-        /* Base Styling */
         body { font-family: 'Inter', sans-serif; background-color: #f3f4f6; color: #1f2937; }
-        
-        /* Card Styling */
-        .header-card { 
-            background-color: #ffffff; 
-            border-radius: 16px;
-            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-            max-width: 90%;
-            margin: 24px auto; 
-            padding: 32px; 
-        }
-
-        /* Input Group */
-        .input-group {
-            display: flex;
-            flex-direction: column; 
-            gap: 16px;
-            padding: 16px 0;
-        }
-        @media (min-width: 640px) { 
-            .input-group {
-                flex-direction: row;
-                align-items: center;
-                justify-content: space-between;
-            }
-        }
-        
-        /* Chart Filter Buttons */
-        .filter-btn {
-            padding: 6px 16px;
-            font-size: 0.875rem;
-            font-weight: 600;
-            border-radius: 9999px;
-            transition: all 0.2s;
-            background-color: #f3f4f6;
-            color: #4b5563;
-        }
-        .filter-btn:hover { background-color: #e5e7eb; color: #111827; }
-        .filter-btn.active {
-            background-color: #4f46e5;
-            color: white;
-            box-shadow: 0 4px 6px -1px rgba(79, 70, 229, 0.3);
-        }
-
-        /* Table Styling */
-        .table-container {
-            overflow: hidden; 
-            border: 1px solid #e5e7eb;
-            border-radius: 16px; 
-            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-            max-width: 90%; 
-            margin: 24px auto 60px; 
-            background-color: #ffffff;
-        }
-        .table-scroll-body {
-            max-height: 500px; 
-            overflow-y: auto; 
-            overflow-x: auto;
-        }
-        th { 
-            background-color: #4f46e5; 
-            color: white; 
-            padding: 16px; 
-            text-align: center; 
-            font-weight: 600; 
-            position: sticky; top: 0; z-index: 10; 
-            white-space: nowrap;
-        }
-        td { 
-            padding: 12px 16px; 
-            border-bottom: 1px solid #f3f4f6; 
-            text-align: center;
-            white-space: nowrap;
-        }
-        tbody tr:nth-child(odd) { background-color: #f9fafb; }
-        tbody tr:hover { background-color: #f3f4f6; }
-
-        /* Loading Spinner */
+        .card { background-color: #ffffff; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); padding: 20px; }
         .loader {
-            border: 4px solid #f3f3f3;
-            border-top: 4px solid #4f46e5;
-            border-radius: 50%;
-            width: 24px;
-            height: 24px;
-            animation: spin 1s linear infinite;
-            display: inline-block;
-            vertical-align: middle;
-            margin-right: 8px;
+            border: 3px solid #f3f3f3; border-top: 3px solid #4f46e5; border-radius: 50%;
+            width: 20px; height: 20px; animation: spin 1s linear infinite; display: inline-block;
         }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
     </style>
 </head>
+<body class="p-6">
 
-<body>
-
-<div class="header-card max-w-7xl">
-    <div class="border-b pb-6 mb-6">
-        <h1 class="text-3xl md:text-4xl font-extrabold text-indigo-700 mb-2">ESP32 Sensor Data Viewer</h1>
-        <p class="text-gray-500">Visualize and analyze your logs directly from GitHub Raw Data.</p>
-    </div>
-    
-    <div class="input-group">
+    <div class="max-w-7xl mx-auto mb-6 flex flex-col md:flex-row justify-between items-center">
         <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">Data Source</label>
-            <div id="loadingIndicator" class="text-sm text-indigo-600 font-semibold hidden">
-                <div class="loader"></div> Fetching from GitHub...
+            <h1 class="text-3xl font-bold text-indigo-800">SPMB Monitor</h1>
+            <p class="text-gray-500 text-sm">Live data from ESP32 via GitHub Raw</p>
+        </div>
+        <div class="mt-4 md:mt-0 text-right">
+            <div id="status" class="text-sm font-semibold text-gray-400 flex items-center gap-2">
+                <div class="loader"></div> Connecting...
             </div>
-            <p id="sourceStatus" class="text-sm text-gray-500 mb-2">
-                Attempting to load data...
-            </p>
-        </div>
-        
-        <div class="flex-shrink-0 w-full sm:w-auto">
-            <label class="block text-xs text-gray-400 mb-1">Or upload specific file:</label>
-            <input 
-                type="file" 
-                id="csvFileInput" 
-                accept=".csv" 
-                class="block w-full text-sm text-gray-500
-                        file:mr-4 file:py-2.5 file:px-4
-                        file:rounded-full file:border-0
-                        file:text-sm file:font-bold
-                        file:bg-indigo-50 file:text-indigo-700
-                        hover:file:bg-indigo-100
-                        cursor-pointer"
-            >
-        </div>
-    </div>
-</div>
-
-<div id="latestDataContainer" class="header-card max-w-7xl hidden">
-    <div class="flex items-center justify-between mb-6 border-b pb-4">
-        <h2 class="text-xl font-bold text-gray-800 flex items-center gap-2">
-            <span class="w-2 h-6 bg-indigo-500 rounded-full"></span>
-            Latest Reading
-        </h2>
-        <span class="text-xs font-medium px-2 py-1 bg-green-100 text-green-700 rounded-lg">Live Update</span>
-    </div>
-    
-    <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
-        <div class="bg-blue-50 p-4 rounded-xl border border-blue-100 flex flex-col items-center">
-            <div class="text-xs font-bold uppercase text-blue-400 tracking-wider">Date</div>
-            <div id="latestDate" class="text-lg md:text-xl font-bold text-blue-700 mt-1">--</div>
-        </div>
-        <div class="bg-blue-50 p-4 rounded-xl border border-blue-100 flex flex-col items-center">
-            <div class="text-xs font-bold uppercase text-blue-400 tracking-wider">Time</div>
-            <div id="latestTime" class="text-lg md:text-xl font-bold text-blue-700 mt-1">--</div>
-        </div>
-        <div class="bg-red-50 p-4 rounded-xl border border-red-100 flex flex-col items-center">
-            <div class="text-xs font-bold uppercase text-red-400 tracking-wider">Temperature</div>
-            <div id="latestTemp" class="text-lg md:text-2xl font-bold text-red-700 mt-1">-- &deg;C</div>
-        </div>
-        <div class="bg-green-50 p-4 rounded-xl border border-green-100 flex flex-col items-center">
-            <div class="text-xs font-bold uppercase text-green-400 tracking-wider">Humidity</div>
-            <div id="latestHumidity" class="text-lg md:text-2xl font-bold text-green-700 mt-1">-- %</div>
+            <button onclick="fetchData()" class="mt-2 text-xs bg-indigo-100 text-indigo-700 px-3 py-1 rounded-full hover:bg-indigo-200 transition">
+                Force Refresh
+            </button>
         </div>
     </div>
 
-    <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <div class="bg-amber-50 p-4 rounded-xl border border-amber-100 flex flex-col items-center">
-            <div class="text-xs font-bold uppercase text-amber-500 tracking-wider">Soil Moisture</div>
-            <div id="latestSoil" class="text-lg md:text-2xl font-bold text-amber-700 mt-1">--</div>
+    <div class="max-w-7xl mx-auto grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+        <div class="card border-l-4 border-blue-500">
+            <p class="text-xs text-gray-400 uppercase font-bold">Last Update</p>
+            <p id="lastDate" class="text-lg font-bold text-gray-800">--</p>
+            <p id="lastTime" class="text-sm text-gray-500">--</p>
         </div>
-        <div class="bg-indigo-50 p-4 rounded-xl border border-indigo-100 flex flex-col items-center">
-            <div class="text-xs font-bold uppercase text-indigo-400 tracking-wider">Rain Status</div>
-            <div id="latestRain" class="text-lg md:text-2xl font-bold text-indigo-700 mt-1">--</div>
+        <div class="card border-l-4 border-red-500">
+            <p class="text-xs text-gray-400 uppercase font-bold">Temperature</p>
+            <p id="valTemp" class="text-2xl font-bold text-red-600">-- °C</p>
         </div>
-        <div class="bg-purple-50 p-4 rounded-xl border border-purple-100 flex flex-col items-center">
-            <div class="text-xs font-bold uppercase text-purple-400 tracking-wider">Light (LDR)</div>
-            <div id="latestLDR" class="text-lg md:text-2xl font-bold text-purple-700 mt-1">--</div>
+        <div class="card border-l-4 border-blue-400">
+            <p class="text-xs text-gray-400 uppercase font-bold">Humidity</p>
+            <p id="valHum" class="text-2xl font-bold text-blue-600">-- %</p>
         </div>
-        <div class="bg-cyan-50 p-4 rounded-xl border border-cyan-100 flex flex-col items-center">
-            <div class="text-xs font-bold uppercase text-cyan-500 tracking-wider">Water Level</div>
-            <div id="latestWater" class="text-lg md:text-2xl font-bold text-cyan-700 mt-1">--</div>
+        <div class="card border-l-4 border-indigo-500">
+            <p class="text-xs text-gray-400 uppercase font-bold">Rain Status</p>
+            <p id="valRain" class="text-2xl font-bold text-indigo-600">--</p>
         </div>
-    </div>
-</div>
-
-<div id="chartsContainer" class="header-card max-w-7xl hidden">
-    <div class="flex flex-col md:flex-row md:items-center justify-between mb-8 border-b pb-4 gap-4">
-        <h2 class="text-xl font-bold text-gray-800 flex items-center gap-2">
-            <span class="w-2 h-6 bg-pink-500 rounded-full"></span>
-            Sensor Trends
-        </h2>
-        
-        <div class="flex flex-wrap gap-2" id="timeFilters">
-            <button class="filter-btn" data-days="1">1 Day</button>
-            <button class="filter-btn active" data-days="7">1 Week</button>
-            <button class="filter-btn" data-days="30">1 Month</button>
-            <button class="filter-btn" data-days="90">3 Months</button>
-            <button class="filter-btn" data-days="180">6 Months</button>
-            <button class="filter-btn" data-days="365">1 Year</button>
-            <button class="filter-btn" data-days="99999">All</button>
+        <div class="card border-l-4 border-amber-500">
+            <p class="text-xs text-gray-400 uppercase font-bold">Soil Moisture</p>
+            <p id="valSoil" class="text-2xl font-bold text-amber-600">-- %</p>
+        </div>
+        <div class="card border-l-4 border-purple-500">
+            <p class="text-xs text-gray-400 uppercase font-bold">Light Level</p>
+            <p id="valLDR" class="text-2xl font-bold text-purple-600">--</p>
+        </div>
+        <div class="card border-l-4 border-cyan-500">
+            <p class="text-xs text-gray-400 uppercase font-bold">Water Level</p>
+            <p id="valWater" class="text-2xl font-bold text-cyan-600">-- cm</p>
         </div>
     </div>
 
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        
-        <div class="bg-white p-4 rounded-xl border shadow-sm">
-            <h3 class="text-sm font-bold text-gray-500 uppercase mb-4">Temperature History</h3>
-            <canvas id="chartTemp"></canvas>
+    <div class="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+        <div class="card">
+            <h3 class="text-gray-500 font-bold text-sm mb-4">Temperature & Humidity</h3>
+            <canvas id="chartTempHum"></canvas>
         </div>
-
-        <div class="bg-white p-4 rounded-xl border shadow-sm">
-            <h3 class="text-sm font-bold text-gray-500 uppercase mb-4">Humidity History</h3>
-            <canvas id="chartHum"></canvas>
-        </div>
-
-        <div class="bg-white p-4 rounded-xl border shadow-sm">
-            <h3 class="text-sm font-bold text-gray-500 uppercase mb-4">Soil Moisture</h3>
-            <canvas id="chartSoil"></canvas>
-        </div>
-
-        <div class="bg-white p-4 rounded-xl border shadow-sm">
-            <h3 class="text-sm font-bold text-gray-500 uppercase mb-4">Light Level (LDR)</h3>
-            <canvas id="chartLDR"></canvas>
-        </div>
-
-        <div class="bg-white p-4 rounded-xl border shadow-sm">
-            <h3 class="text-sm font-bold text-gray-500 uppercase mb-4">Water Level (0-10cm)</h3>
-            <canvas id="chartWater"></canvas>
-        </div>
-
-        <div class="bg-white p-4 rounded-xl border shadow-sm">
-            <h3 class="text-sm font-bold text-gray-500 uppercase mb-4">Rain Events (Yes/No)</h3>
-            <canvas id="chartRain"></canvas>
+        <div class="card">
+            <h3 class="text-gray-500 font-bold text-sm mb-4">Soil & Water</h3>
+            <canvas id="chartSoilWater"></canvas>
         </div>
     </div>
-</div>
 
-<div id="statusMessage" class="text-red-500 font-semibold text-center hidden mb-4 max-w-7xl mx-auto"></div>
-
-<div id="tableWrapper" class="table-container hidden max-w-7xl">
-    <div class="p-6 border-b border-gray-100 bg-gray-50 flex items-center justify-between">
-        <div>
-            <h2 class="text-lg font-bold text-gray-800">All Sensor Readings</h2>
-            <p class="text-sm text-gray-500">Complete history of logged data.</p>
+    <div class="max-w-7xl mx-auto card overflow-hidden">
+        <h3 class="text-gray-500 font-bold text-sm mb-4">Recent History (Last 20 Entries)</h3>
+        <div class="overflow-x-auto">
+            <table class="w-full text-sm text-left text-gray-500">
+                <thead class="text-xs text-gray-700 uppercase bg-gray-50">
+                    <tr>
+                        <th class="px-4 py-3">Date</th>
+                        <th class="px-4 py-3">Time</th>
+                        <th class="px-4 py-3">Temp</th>
+                        <th class="px-4 py-3">Hum</th>
+                        <th class="px-4 py-3">Soil</th>
+                        <th class="px-4 py-3">Rain</th>
+                        <th class="px-4 py-3">Light</th>
+                        <th class="px-4 py-3">Water</th>
+                    </tr>
+                </thead>
+                <tbody id="tableBody">
+                    </tbody>
+            </table>
         </div>
-        <span class="text-xs bg-gray-200 text-gray-600 px-3 py-1 rounded-full" id="rowCountBadge">0 entries</span>
     </div>
-
-    <div class="table-scroll-body">
-        <table id="csvTable" class="w-full">
-            <thead>
-                <tr id="tableHeaderRow"></tr>
-            </thead>
-            <tbody id="tableBody"></tbody>
-        </table>
-    </div>
-</div>
 
 <script>
-// Global Data Storage
-let allSensorData = [];
-let chartInstances = {};
+    // --- CONFIGURATION ---
+    const GITHUB_USERNAME = "NCasgar";
+    const REPO_NAME = "SPMB";
+    const BRANCH_NAME = "main";
+    const FILE_PATH = "data.csv";
 
-// --- Helper: Parsing Logic (Reused by Fetch and Upload) ---
-function parseCSV(text) {
-    const lines = text.trim().split(/\r?\n/).filter(line => line.trim() !== '');
-    if (lines.length === 0) throw new Error("File is empty.");
+    // Chart Instances
+    let chart1, chart2;
 
-    // 1. Parse Header
-    const headerLine = lines[0].trim();
-    const headers = headerLine.split(",").map(h => h.trim().replace(/^"|"$/g, ''));
-    
-    // 2. Parse Data Lines
-    const dataLines = lines.slice(1);
-    if (dataLines.length === 0) throw new Error("No data rows found.");
+    // Run on load
+    document.addEventListener("DOMContentLoaded", fetchData);
 
-    // Reset Data
-    allSensorData = [];
+    // --- MAIN FUNCTION: Fetch Data from GitHub Raw ---
+    function fetchData() {
+        const statusEl = document.getElementById("status");
+        statusEl.innerHTML = '<div class="loader"></div> Fetching...';
 
-    // Parse CSV into Objects
-    dataLines.forEach(line => {
-        const cols = line.split(",").map(c => c.trim().replace(/^"|"$/g, ''));
-        if (cols.length === headers.length) {
-            const dateStr = cols[0]; 
-            const timeStr = cols[1];
-            const fullDateStr = `${dateStr} ${timeStr}`;
-            const timestamp = new Date(fullDateStr).getTime();
+        // 1. Construct URL with Timestamp to bypass Cache
+        const rawUrl = `https://raw.githubusercontent.com/${GITHUB_USERNAME}/${REPO_NAME}/${BRANCH_NAME}/${FILE_PATH}`;
+        const cacheBuster = rawUrl + '?t=' + new Date().getTime();
 
-            if (!isNaN(timestamp)) {
-                allSensorData.push({
-                    timestamp: timestamp,
-                    dateStr: dateStr,
-                    timeStr: timeStr,
-                    temp: parseFloat(cols[2]),
-                    hum: parseFloat(cols[3]),
-                    soil: parseFloat(cols[4]),
-                    rainRaw: cols[5],
-                    rainVal: (cols[5].toLowerCase() === 'yes') ? 1 : 0,
-                    ldr: parseFloat(cols[6]),
-                    water: parseFloat(cols[7])
-                });
-            }
-        }
-    });
-
-    // Sort by timestamp
-    allSensorData.sort((a, b) => a.timestamp - b.timestamp);
-
-    return { headers };
-}
-
-// --- Main Initialization ---
-document.addEventListener("DOMContentLoaded", () => {
-    const csvFileInput = document.getElementById("csvFileInput");
-    const statusMessage = document.getElementById("statusMessage");
-    const sourceStatus = document.getElementById("sourceStatus");
-    const loadingIndicator = document.getElementById("loadingIndicator");
-
-    const latestContainer = document.getElementById("latestDataContainer");
-    const chartsContainer = document.getElementById("chartsContainer");
-    const tableWrapper = document.getElementById("tableWrapper");
-
-    // 1. Auto-Load on Startup
-    autoLoadData();
-
-    function autoLoadData() {
-        loadingIndicator.classList.remove('hidden');
-        sourceStatus.classList.add('hidden');
-
-        // *** FIX: Use GitHub Raw URL with Cache Busting ***
-        const repoUser = "NCasgar";
-        const repoName = "SPMB";
-        const branch = "main";
-        const filePath = "data.csv";
-        
-        // Construct the RAW URL
-        const rawUrl = `https://raw.githubusercontent.com/${repoUser}/${repoName}/${branch}/${filePath}`;
-        
-        // Add timestamp to prevent caching
-        const cacheBusterUrl = rawUrl + '?t=' + new Date().getTime();
-
-        fetch(cacheBusterUrl)
+        fetch(cacheBuster)
             .then(response => {
-                if (!response.ok) throw new Error("data.csv not found on GitHub (404)");
+                if (!response.ok) throw new Error("File not found on GitHub");
                 return response.text();
             })
-            .then(text => {
-                const { headers } = parseCSV(text);
-                updateUI(headers);
-                
-                loadingIndicator.classList.add('hidden');
-                sourceStatus.classList.remove('hidden');
-                sourceStatus.innerHTML = `Loaded LIVE data from <span class="font-bold text-gray-700">GitHub</span>.`;
-                sourceStatus.classList.add('text-green-600');
+            .then(csvText => {
+                const data = parseCSV(csvText);
+                updateUI(data);
+                statusEl.innerHTML = '<span class="text-green-500">● Live</span>';
             })
-            .catch(err => {
-                loadingIndicator.classList.add('hidden');
-                sourceStatus.classList.remove('hidden');
-                sourceStatus.innerHTML = `Could not load from GitHub. Upload file manually.`;
-                sourceStatus.classList.add('text-amber-600');
-                console.warn("Auto-load failed:", err);
+            .catch(error => {
+                console.error(error);
+                statusEl.innerHTML = '<span class="text-red-500">Error loading data</span>';
             });
     }
 
-    // 2. Manual Upload Listener
-    csvFileInput.addEventListener("change", function(e) {
-        const file = e.target.files[0];
-        if (!file) return;
+    // --- PARSER ---
+    function parseCSV(text) {
+        const lines = text.trim().split("\n");
+        const headers = lines[0].split(",");
+        const result = [];
 
-        // Reset UI
-        statusMessage.classList.add('hidden');
-        sourceStatus.textContent = "Processing uploaded file...";
-        sourceStatus.className = "text-sm text-blue-600 mb-2";
+        // Parse lines (skip header)
+        for (let i = 1; i < lines.length; i++) {
+            const row = lines[i].split(",");
+            if (row.length < 8) continue; // Skip incomplete lines
 
-        const reader = new FileReader();
-        reader.onload = function(event) {
-            try {
-                const { headers } = parseCSV(event.target.result);
-                updateUI(headers);
-                sourceStatus.innerHTML = `Loaded uploaded file: <span class="font-bold text-gray-700">${file.name}</span>`;
-                sourceStatus.className = "text-sm text-green-600 mb-2";
-            } catch (err) {
-                showError(err.message);
-                sourceStatus.textContent = "Upload failed.";
-                sourceStatus.className = "text-sm text-red-500 mb-2";
-            }
-        };
-        reader.onerror = () => showError("Error reading file.");
-        reader.readAsText(file);
-    });
-
-    // 3. UI Update Logic
-    function updateUI(headers) {
-        if (allSensorData.length > 0) {
-            // Update Latest Reading
-            const latest = allSensorData[allSensorData.length - 1];
-            updateLatestCard(latest);
-
-            // Update Charts
-            chartsContainer.classList.remove('hidden');
-            updateCharts(7); // Default 1 week
-
-            // Update Table
-            populateTable(allSensorData, headers);
-            
-            // Show Sections
-            latestContainer.classList.remove('hidden');
-            tableWrapper.classList.remove('hidden');
+            result.push({
+                date: row[0],
+                time: row[1],
+                temp: parseFloat(row[2]),
+                hum: parseFloat(row[3]),
+                soil: parseFloat(row[4]),
+                rain: row[5],
+                ldr: parseFloat(row[6]),
+                water: parseFloat(row[7])
+            });
         }
+        return result;
     }
 
-    // --- Sub-Functions ---
-    function showError(msg) {
-        statusMessage.textContent = msg;
-        statusMessage.classList.remove('hidden');
-    }
+    // --- UI UPDATER ---
+    function updateUI(data) {
+        if (data.length === 0) return;
 
-    function updateLatestCard(data) {
-        document.getElementById('latestDate').textContent = data.dateStr;
-        document.getElementById('latestTime').textContent = data.timeStr;
-        document.getElementById('latestTemp').innerHTML = `${data.temp} &deg;C`;
-        document.getElementById('latestHumidity').innerHTML = `${data.hum} %`;
-        document.getElementById('latestSoil').textContent = `${data.soil} %`; 
-        document.getElementById('latestRain').textContent = data.rainRaw;
-        document.getElementById('latestLDR').textContent = `${data.ldr} %`; 
-        document.getElementById('latestWater').textContent = `${data.water} cm`;
-    }
+        // 1. Update Latest Cards
+        const last = data[data.length - 1];
+        document.getElementById("lastDate").textContent = last.date;
+        document.getElementById("lastTime").textContent = last.time;
+        document.getElementById("valTemp").textContent = last.temp + " °C";
+        document.getElementById("valHum").textContent = last.hum + " %";
+        document.getElementById("valRain").textContent = last.rain;
+        document.getElementById("valSoil").textContent = last.soil + " %";
+        document.getElementById("valLDR").textContent = last.ldr;
+        document.getElementById("valWater").textContent = last.water + " cm";
 
-    function populateTable(data, headers) {
+        // 2. Update Table (Show last 20 reversed)
         const tableBody = document.getElementById("tableBody");
-        const tableHeaderRow = document.getElementById("tableHeaderRow");
-        
-        // Build Headers
-        tableHeaderRow.innerHTML = "";
-        headers.forEach(header => {
-            const th = document.createElement("th");
-            th.textContent = header;
-            tableHeaderRow.appendChild(th);
-        });
-
-        // Build Rows (Reversed)
         tableBody.innerHTML = "";
-        const reversed = [...data].reverse();
-        const displayData = reversed.slice(0, 1000); 
+        const recentData = data.slice().reverse().slice(0, 20);
         
-        document.getElementById('rowCountBadge').textContent = `${data.length} entries`;
-
-        displayData.forEach(row => {
-            const tr = document.createElement("tr");
-            const values = [
-                row.dateStr, row.timeStr, row.temp, row.hum, row.soil, 
-                row.rainRaw, row.ldr, row.water
-            ];
-            values.forEach(val => {
-                const td = document.createElement("td");
-                td.textContent = val;
-                tr.appendChild(td);
-            });
-            tableBody.appendChild(tr);
+        recentData.forEach(row => {
+            const tr = `
+                <tr class="bg-white border-b hover:bg-gray-50">
+                    <td class="px-4 py-2">${row.date}</td>
+                    <td class="px-4 py-2">${row.time}</td>
+                    <td class="px-4 py-2 font-medium text-red-600">${row.temp}</td>
+                    <td class="px-4 py-2 text-blue-600">${row.hum}</td>
+                    <td class="px-4 py-2 text-amber-600">${row.soil}</td>
+                    <td class="px-4 py-2">${row.rain}</td>
+                    <td class="px-4 py-2 text-purple-600">${row.ldr}</td>
+                    <td class="px-4 py-2 text-cyan-600">${row.water}</td>
+                </tr>`;
+            tableBody.innerHTML += tr;
         });
+
+        // 3. Update Charts
+        updateCharts(data);
     }
 
-    // Filter Button Logic
-    const filterButtons = document.querySelectorAll('.filter-btn');
-    filterButtons.forEach(btn => {
-        btn.addEventListener('click', (e) => {
-            filterButtons.forEach(b => b.classList.remove('active'));
-            e.target.classList.add('active');
-            const days = parseInt(e.target.getAttribute('data-days'));
-            updateCharts(days);
+    // --- CHART LOGIC ---
+    function updateCharts(data) {
+        // Limit chart to last 50 points to keep it clean
+        const chartData = data.slice(-50);
+        const labels = chartData.map(d => d.time);
+
+        // Chart 1: Temp & Hum
+        const ctx1 = document.getElementById('chartTempHum').getContext('2d');
+        if (chart1) chart1.destroy();
+        chart1 = new Chart(ctx1, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [
+                    { label: 'Temp', data: chartData.map(d => d.temp), borderColor: '#ef4444', tension: 0.1 },
+                    { label: 'Humidity', data: chartData.map(d => d.hum), borderColor: '#3b82f6', tension: 0.1 }
+                ]
+            },
+            options: { responsive: true, elements: { point: { radius: 1 } } }
         });
-    });
-});
 
-// --- Charting Logic ---
-function updateCharts(daysRange) {
-    if (allSensorData.length === 0) return;
-
-    // Filter Data by Range
-    const lastTimestamp = allSensorData[allSensorData.length - 1].timestamp;
-    const msInDay = 24 * 60 * 60 * 1000;
-    const cutoffTime = lastTimestamp - (daysRange * msInDay);
-
-    let filteredData = allSensorData.filter(d => d.timestamp >= cutoffTime);
-
-    // Downsampling
-    const maxPoints = 800;
-    if (filteredData.length > maxPoints) {
-        const step = Math.ceil(filteredData.length / maxPoints);
-        filteredData = filteredData.filter((_, index) => index % step === 0);
+        // Chart 2: Soil & Water
+        const ctx2 = document.getElementById('chartSoilWater').getContext('2d');
+        if (chart2) chart2.destroy();
+        chart2 = new Chart(ctx2, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [
+                    { label: 'Soil', data: chartData.map(d => d.soil), borderColor: '#d97706', tension: 0.1 },
+                    { label: 'Water', data: chartData.map(d => d.water), borderColor: '#06b6d4', tension: 0.1 }
+                ]
+            },
+            options: { responsive: true, elements: { point: { radius: 1 } } }
+        });
     }
-
-    // Prepare Arrays
-    const labels = filteredData.map(d => {
-        const dateObj = new Date(d.timestamp);
-        return `${dateObj.getMonth()+1}/${dateObj.getDate()} ${d.timeStr.substring(0,5)}`;
-    });
-
-    const tempData = filteredData.map(d => d.temp);
-    const humData = filteredData.map(d => d.hum);
-    const soilData = filteredData.map(d => d.soil);
-    const ldrData = filteredData.map(d => d.ldr);
-    const waterData = filteredData.map(d => d.water);
-    const rainData = filteredData.map(d => d.rainVal);
-
-    // Draw Charts
-    drawChart('chartTemp', 'line', labels, [
-        { label: 'Temperature (°C)', data: tempData, borderColor: '#ef4444', backgroundColor: 'rgba(239, 68, 68, 0.1)', fill: true, tension: 0.3 }
-    ]);
-    drawChart('chartHum', 'line', labels, [
-        { label: 'Humidity (%)', data: humData, borderColor: '#3b82f6', backgroundColor: 'rgba(59, 130, 246, 0.1)', fill: true, tension: 0.3 }
-    ]);
-    drawChart('chartSoil', 'line', labels, [
-        { label: 'Soil Moisture (%)', data: soilData, borderColor: '#d97706', backgroundColor: 'rgba(217, 119, 6, 0.1)', fill: true, tension: 0.3 }
-    ]);
-    drawChart('chartLDR', 'line', labels, [
-        { label: 'Light Level (%)', data: ldrData, borderColor: '#9333ea', backgroundColor: 'rgba(147, 51, 234, 0.1)', fill: true, tension: 0.3 }
-    ]);
-    drawChart('chartWater', 'line', labels, [
-        { label: 'Water Level (cm)', data: waterData, borderColor: '#06b6d4', backgroundColor: 'rgba(6, 182, 212, 0.2)', fill: true, tension: 0.2 }
-    ], { min: 0, max: 12 });
-    drawChart('chartRain', 'line', labels, [
-        { label: 'Rain (1=Yes, 0=No)', data: rainData, borderColor: '#6366f1', backgroundColor: 'rgba(99, 102, 241, 0.2)', fill: true, stepper: true, tension: 0 }
-    ], { min: 0, max: 1.2, stepSize: 1 });
-}
-
-function drawChart(canvasId, type, labels, datasets, yAxisConfig = {}) {
-    const ctx = document.getElementById(canvasId).getContext('2d');
-    if (chartInstances[canvasId]) chartInstances[canvasId].destroy();
-
-    chartInstances[canvasId] = new Chart(ctx, {
-        type: type,
-        data: { labels: labels, datasets: datasets },
-        options: {
-            responsive: true,
-            interaction: { mode: 'index', intersect: false },
-            plugins: { legend: { position: 'top' }, tooltip: { enabled: true } },
-            scales: { x: { display: true, ticks: { maxTicksLimit: 10 } }, y: { display: true, ...yAxisConfig } },
-            elements: { point: { radius: 0, hoverRadius: 6 } }
-        }
-    });
-}
 </script>
-
 </body>
 </html>
